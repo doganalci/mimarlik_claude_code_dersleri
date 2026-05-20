@@ -1,84 +1,72 @@
-import re
-from urllib.parse import quote, unquote
+import os
 
-import requests
+from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
+from openai import OpenAI
+
+load_dotenv()
+if not os.environ.get("OPENAI_API_KEY") and os.path.exists(".env.example"):
+    load_dotenv(".env.example")
 
 app = Flask(__name__)
 
-SEARCH_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
-}
-
-
-def _first_image_from_google(query: str) -> str | None:
-    url = f"https://www.google.com/search?tbm=isch&q={quote(query)}"
-    r = requests.get(url, headers=SEARCH_HEADERS, timeout=10)
-    r.raise_for_status()
-    html = r.text
-
-    # Google embeds candidate image URLs inside arrays like ["https://...jpg",123,456]
-    candidates = re.findall(
-        r'\["(https?://[^"]+?\.(?:jpg|jpeg|png|gif|webp))",\s*\d+,\s*\d+\]',
-        html,
-        flags=re.IGNORECASE,
+if not os.environ.get("OPENAI_API_KEY"):
+    print(
+        "[uyarı] OPENAI_API_KEY bulunamadı. .env dosyasına ekle "
+        "(cp .env.example .env, sonra düzenle)."
     )
-    for c in candidates:
-        if "gstatic.com" in c or "google.com" in c:
-            continue
-        return c
 
-    # Fallback: imgres?imgurl=... links in the HTML
-    for m in re.findall(r"/imgres\?imgurl=([^&]+)&", html):
-        decoded = unquote(m)
-        if decoded.startswith("http"):
-            return decoded
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "dall-e-3")
+IMAGE_SIZE = os.environ.get("IMAGE_SIZE", "1024x1024")
 
-    return None
+_openai_client: OpenAI | None = None
 
 
-def _first_image_from_duckduckgo(query: str) -> str | None:
-    # vqd token
-    token_resp = requests.post(
-        "https://duckduckgo.com/",
-        data={"q": query},
-        headers=SEARCH_HEADERS,
-        timeout=10,
+def get_openai() -> OpenAI:
+    global _openai_client
+    if _openai_client is None:
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise RuntimeError(
+                "OPENAI_API_KEY tanımlı değil. .env dosyasına ekle."
+            )
+        _openai_client = OpenAI()
+    return _openai_client
+
+
+PROMPT_SYSTEM = (
+    "Aşağıdaki metni, bir görsel üretim modeline (DALL·E) verilecek "
+    "kısa ve net bir İngilizce görsel açıklamasına çevir. "
+    "Metnin ana fikrini ve atmosferini yakala. "
+    "Sadece açıklamayı döndür, başka hiçbir şey yazma. "
+    "1-2 cümle, tırnaksız."
+)
+
+
+def build_image_prompt(text: str) -> str:
+    client = get_openai()
+    resp = client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": PROMPT_SYSTEM},
+            {"role": "user", "content": text},
+        ],
+        temperature=0.4,
+        max_tokens=120,
     )
-    m = re.search(r"vqd=([\d-]+)\&", token_resp.text) or re.search(
-        r'vqd="([\d-]+)"', token_resp.text
+    raw = (resp.choices[0].message.content or "").strip()
+    return raw.strip('"').strip("'")
+
+
+def generate_image(prompt: str) -> str:
+    client = get_openai()
+    result = client.images.generate(
+        model=IMAGE_MODEL,
+        prompt=prompt,
+        size=IMAGE_SIZE,
+        n=1,
     )
-    if not m:
-        return None
-    vqd = m.group(1)
-
-    api = (
-        "https://duckduckgo.com/i.js"
-        f"?l=tr-tr&o=json&q={quote(query)}&vqd={vqd}&f=,,,,,&p=1"
-    )
-    headers = {**SEARCH_HEADERS, "Referer": "https://duckduckgo.com/"}
-    data = requests.get(api, headers=headers, timeout=10).json()
-    results = data.get("results") or []
-    if results:
-        return results[0].get("image") or results[0].get("thumbnail")
-    return None
-
-
-def find_first_image(query: str) -> str | None:
-    try:
-        img = _first_image_from_google(query)
-        if img:
-            return img
-    except Exception:
-        pass
-    try:
-        return _first_image_from_duckduckgo(query)
-    except Exception:
-        return None
+    return result.data[0].url
 
 
 @app.route("/")
@@ -89,15 +77,28 @@ def index():
 @app.post("/suggest")
 def suggest():
     payload = request.get_json(silent=True) or {}
-    query = (payload.get("query") or "").strip()
-    if not query:
+    text = (payload.get("query") or "").strip()
+    if not text:
         return jsonify({"error": "Metin boş olamaz."}), 400
 
-    image = find_first_image(query)
-    if not image:
-        return jsonify({"error": "Resim bulunamadı."}), 404
-    return jsonify({"image": image, "query": query})
+    try:
+        prompt = build_image_prompt(text)
+    except Exception as e:
+        return jsonify({"error": f"Prompt üretilemedi: {e}"}), 500
+
+    if not prompt:
+        return jsonify({"error": "Prompt boş döndü."}), 500
+
+    try:
+        image_url = generate_image(prompt)
+    except Exception as e:
+        return jsonify(
+            {"error": f"Resim üretilemedi: {e}", "prompt": prompt}
+        ), 500
+
+    return jsonify({"image": image_url, "prompt": prompt})
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    port = int(os.environ.get("PORT", 5001))
+    app.run(host="0.0.0.0", port=port, debug=True)

@@ -134,12 +134,31 @@
         animation: spin 0.8s linear infinite;
       }
       @keyframes spin { to { transform: rotate(360deg); } }
+      .prompt-box {
+        background: #0b1220;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 12px;
+      }
+      .prompt-label {
+        font-size: 11px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 4px;
+      }
+      .prompt-text {
+        font-size: 14px;
+        color: var(--text);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
     </style>
   </head>
   <body>
     <header>
       <h1>Metin & Resim Önerisi</h1>
-      <p>Sol tarafa metin yaz, butona bas — sağ tarafta metne uygun ilk Google resmi çıksın.</p>
+      <p>Sol tarafa metin yaz, butona bas — GPT-4o-mini metinden bir görsel prompt'u üretir, DALL·E o prompt'tan resmi oluşturur.</p>
     </header>
     <main>
       <section class="panel">
@@ -155,6 +174,10 @@
         <div class="image-area" id="image-area">
           <span class="placeholder">Henüz öneri yok. Butona bas.</span>
         </div>
+        <div class="prompt-box" id="prompt-box">
+          <div class="prompt-label">GPT prompt</div>
+          <div class="prompt-text" id="prompt-text">—</div>
+        </div>
         <div class="meta" id="meta"></div>
       </section>
     </main>
@@ -163,17 +186,20 @@
       const input = document.getElementById("text-input");
       const area = document.getElementById("image-area");
       const meta = document.getElementById("meta");
+      const promptText = document.getElementById("prompt-text");
 
       btn.addEventListener("click", async () => {
         const query = input.value.trim();
         if (!query) {
           area.innerHTML = '<span class="error">Önce metin yaz.</span>';
           meta.textContent = "";
+          promptText.textContent = "—";
           return;
         }
         btn.disabled = true;
         area.innerHTML = '<div class="spinner"></div>';
         meta.textContent = "";
+        promptText.textContent = "üretiliyor...";
         try {
           const resp = await fetch("/suggest", {
             method: "POST",
@@ -181,6 +207,7 @@
             body: JSON.stringify({ query }),
           });
           const data = await resp.json();
+          promptText.textContent = data.prompt || "—";
           if (!resp.ok) {
             area.innerHTML = `<span class="error">${data.error || "Hata oluştu."}</span>`;
             return;
@@ -192,11 +219,11 @@
           };
           img.onerror = () => {
             area.innerHTML =
-              '<span class="error">Resim yüklenemedi (kaynak engellemiş olabilir).</span>';
+              '<span class="error">Resim yüklenemedi.</span>';
           };
-          img.alt = data.query;
+          img.alt = data.prompt;
           img.src = data.image;
-          meta.innerHTML = `Kaynak: <a href="${data.image}" target="_blank" rel="noopener">${data.image}</a>`;
+          meta.innerHTML = `<div><a href="${data.image}" target="_blank" rel="noopener">Resmi yeni sekmede aç</a></div>`;
         } catch (e) {
           area.innerHTML = `<span class="error">Ağ hatası: ${e.message}</span>`;
         } finally {
