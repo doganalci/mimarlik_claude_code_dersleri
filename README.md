@@ -1,19 +1,27 @@
 # Metin & Resim Önerisi
 
-Basit Flask uygulaması: solda metin yazarsın, butona basınca GPT-4o-mini metinden Google Görsel arama terimi çıkarır ve dönen ilk resmi sağda gösterir. Google başarısız olursa DuckDuckGo'ya düşer.
+Flask uygulaması: solda metin yazarsın, butona basınca GPT-4o-mini metinden bir görsel açıklaması (prompt) üretir, DALL·E o prompt'tan resmi oluşturur. Üretilen prompt arayüzde ayrı bir kutuda gösterilir.
 
 ## Kurulum
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
-# .env içine OPENAI_API_KEY=... ekle
+# .env içinde OPENAI_API_KEY=sk-... ayarla
 python app.py
 ```
 
-Sonra tarayıcıdan `http://localhost:5001`.
+Sonra `http://localhost:5001`.
 
-`PORT` env var ile portu değiştirebilirsin (`PORT=8000 python app.py`).
-`OPENAI_MODEL` ile modeli değiştirebilirsin (varsayılan `gpt-4o-mini`).
+## Ayarlar (.env)
 
-> macOS'te 5000 portunu AirPlay Receiver tutar; varsayılan 5001.
+| Anahtar | Varsayılan | Açıklama |
+|--|--|--|
+| `OPENAI_API_KEY` | — | OpenAI API anahtarı (zorunlu) |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Prompt üreten chat modeli |
+| `IMAGE_MODEL` | `dall-e-3` | Resim üretim modeli (`dall-e-2` daha ucuz) |
+| `IMAGE_SIZE` | `1024x1024` | dall-e-3: 1024x1024, 1024x1792, 1792x1024 |
+| `PORT` | `5001` | Sunucu portu |
+
+> macOS'te 5000 portunu AirPlay tutar; varsayılan 5001.
+> DALL·E 3 resim üretim maliyeti standart kalitede ~$0.04/resim.

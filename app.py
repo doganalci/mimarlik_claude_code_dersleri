@@ -1,14 +1,10 @@
 import os
-import re
-from urllib.parse import quote, unquote
 
-import requests
 from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
 from openai import OpenAI
 
 load_dotenv()
-# Kullanıcı .env yerine .env.example'a key yazarsa da çalışsın
 if not os.environ.get("OPENAI_API_KEY") and os.path.exists(".env.example"):
     load_dotenv(".env.example")
 
@@ -20,15 +16,10 @@ if not os.environ.get("OPENAI_API_KEY"):
         "(cp .env.example .env, sonra düzenle)."
     )
 
-SEARCH_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
-}
-
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "dall-e-3")
+IMAGE_SIZE = os.environ.get("IMAGE_SIZE", "1024x1024")
+
 _openai_client: OpenAI | None = None
 
 
@@ -43,91 +34,39 @@ def get_openai() -> OpenAI:
     return _openai_client
 
 
-KEYWORD_PROMPT = (
-    "Aşağıdaki metni özetleyen, Google Görseller'de iyi sonuç verecek "
-    "kısa bir arama terimi üret. Sadece terimi döndür, başka hiçbir şey yazma. "
-    "2-5 kelime, tırnaksız, noktasız."
+PROMPT_SYSTEM = (
+    "Aşağıdaki metni, bir görsel üretim modeline (DALL·E) verilecek "
+    "kısa ve net bir İngilizce görsel açıklamasına çevir. "
+    "Metnin ana fikrini ve atmosferini yakala. "
+    "Sadece açıklamayı döndür, başka hiçbir şey yazma. "
+    "1-2 cümle, tırnaksız."
 )
 
 
-def extract_search_query(text: str) -> str:
+def build_image_prompt(text: str) -> str:
     client = get_openai()
     resp = client.chat.completions.create(
         model=OPENAI_MODEL,
         messages=[
-            {"role": "system", "content": KEYWORD_PROMPT},
+            {"role": "system", "content": PROMPT_SYSTEM},
             {"role": "user", "content": text},
         ],
-        temperature=0.2,
-        max_tokens=30,
+        temperature=0.4,
+        max_tokens=120,
     )
     raw = (resp.choices[0].message.content or "").strip()
-    # tek satır, tırnak/nokta temizliği
-    raw = raw.splitlines()[0] if raw else ""
-    return raw.strip().strip('"').strip("'").rstrip(".")
+    return raw.strip('"').strip("'")
 
 
-def _first_image_from_google(query: str) -> str | None:
-    url = f"https://www.google.com/search?tbm=isch&q={quote(query)}"
-    r = requests.get(url, headers=SEARCH_HEADERS, timeout=10)
-    r.raise_for_status()
-    html = r.text
-
-    candidates = re.findall(
-        r'\["(https?://[^"]+?\.(?:jpg|jpeg|png|gif|webp))",\s*\d+,\s*\d+\]',
-        html,
-        flags=re.IGNORECASE,
+def generate_image(prompt: str) -> str:
+    client = get_openai()
+    result = client.images.generate(
+        model=IMAGE_MODEL,
+        prompt=prompt,
+        size=IMAGE_SIZE,
+        n=1,
     )
-    for c in candidates:
-        if "gstatic.com" in c or "google.com" in c:
-            continue
-        return c
-
-    for m in re.findall(r"/imgres\?imgurl=([^&]+)&", html):
-        decoded = unquote(m)
-        if decoded.startswith("http"):
-            return decoded
-
-    return None
-
-
-def _first_image_from_duckduckgo(query: str) -> str | None:
-    token_resp = requests.post(
-        "https://duckduckgo.com/",
-        data={"q": query},
-        headers=SEARCH_HEADERS,
-        timeout=10,
-    )
-    m = re.search(r"vqd=([\d-]+)\&", token_resp.text) or re.search(
-        r'vqd="([\d-]+)"', token_resp.text
-    )
-    if not m:
-        return None
-    vqd = m.group(1)
-
-    api = (
-        "https://duckduckgo.com/i.js"
-        f"?l=tr-tr&o=json&q={quote(query)}&vqd={vqd}&f=,,,,,&p=1"
-    )
-    headers = {**SEARCH_HEADERS, "Referer": "https://duckduckgo.com/"}
-    data = requests.get(api, headers=headers, timeout=10).json()
-    results = data.get("results") or []
-    if results:
-        return results[0].get("image") or results[0].get("thumbnail")
-    return None
-
-
-def find_first_image(query: str) -> str | None:
-    try:
-        img = _first_image_from_google(query)
-        if img:
-            return img
-    except Exception:
-        pass
-    try:
-        return _first_image_from_duckduckgo(query)
-    except Exception:
-        return None
+    return result.data[0].url
 
 
 @app.route("/")
@@ -143,19 +82,21 @@ def suggest():
         return jsonify({"error": "Metin boş olamaz."}), 400
 
     try:
-        search_query = extract_search_query(text)
+        prompt = build_image_prompt(text)
     except Exception as e:
-        return jsonify({"error": f"Anahtar kelime çıkarılamadı: {e}"}), 500
+        return jsonify({"error": f"Prompt üretilemedi: {e}"}), 500
 
-    if not search_query:
-        return jsonify({"error": "Anahtar kelime üretilemedi."}), 500
+    if not prompt:
+        return jsonify({"error": "Prompt boş döndü."}), 500
 
-    image = find_first_image(search_query)
-    if not image:
+    try:
+        image_url = generate_image(prompt)
+    except Exception as e:
         return jsonify(
-            {"error": "Resim bulunamadı.", "search_query": search_query}
-        ), 404
-    return jsonify({"image": image, "search_query": search_query})
+            {"error": f"Resim üretilemedi: {e}", "prompt": prompt}
+        ), 500
+
+    return jsonify({"image": image_url, "prompt": prompt})
 
 
 if __name__ == "__main__":
