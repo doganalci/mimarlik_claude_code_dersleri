@@ -8,8 +8,17 @@ from flask import Flask, jsonify, render_template, request
 from openai import OpenAI
 
 load_dotenv()
+# Kullanıcı .env yerine .env.example'a key yazarsa da çalışsın
+if not os.environ.get("OPENAI_API_KEY") and os.path.exists(".env.example"):
+    load_dotenv(".env.example")
 
 app = Flask(__name__)
+
+if not os.environ.get("OPENAI_API_KEY"):
+    print(
+        "[uyarı] OPENAI_API_KEY bulunamadı. .env dosyasına ekle "
+        "(cp .env.example .env, sonra düzenle)."
+    )
 
 SEARCH_HEADERS = {
     "User-Agent": (
