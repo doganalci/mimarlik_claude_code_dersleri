@@ -1,16 +1,19 @@
 # Metin & Resim Önerisi
 
-Basit bir Flask uygulaması: solda metin yazarsın, butona basınca sağda metne uygun ilk Google resmi gelir. Google başarısız olursa DuckDuckGo'ya düşer.
+Basit Flask uygulaması: solda metin yazarsın, butona basınca GPT-4o-mini metinden Google Görsel arama terimi çıkarır ve dönen ilk resmi sağda gösterir. Google başarısız olursa DuckDuckGo'ya düşer.
 
-## Çalıştırma
+## Kurulum
 
 ```bash
 pip install -r requirements.txt
+cp .env.example .env
+# .env içine OPENAI_API_KEY=... ekle
 python app.py
 ```
 
-Sonra tarayıcıdan `http://localhost:5001` adresini aç.
+Sonra tarayıcıdan `http://localhost:5001`.
 
-Farklı port kullanmak için: `PORT=8000 python app.py`
+`PORT` env var ile portu değiştirebilirsin (`PORT=8000 python app.py`).
+`OPENAI_MODEL` ile modeli değiştirebilirsin (varsayılan `gpt-4o-mini`).
 
-> macOS'te 5000 portunu AirPlay Receiver tutar; o yüzden varsayılan 5001.
+> macOS'te 5000 portunu AirPlay Receiver tutar; varsayılan 5001.

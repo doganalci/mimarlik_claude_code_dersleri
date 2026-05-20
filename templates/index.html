@@ -139,7 +139,7 @@
   <body>
     <header>
       <h1>Metin & Resim Önerisi</h1>
-      <p>Sol tarafa metin yaz, butona bas — sağ tarafta metne uygun ilk Google resmi çıksın.</p>
+      <p>Sol tarafa metin yaz, butona bas — GPT-4o-mini metinden arama terimi çıkarır, Google'dan ilk resmi sağda gösteririz.</p>
     </header>
     <main>
       <section class="panel">
@@ -194,9 +194,11 @@
             area.innerHTML =
               '<span class="error">Resim yüklenemedi (kaynak engellemiş olabilir).</span>';
           };
-          img.alt = data.query;
+          img.alt = data.search_query;
           img.src = data.image;
-          meta.innerHTML = `Kaynak: <a href="${data.image}" target="_blank" rel="noopener">${data.image}</a>`;
+          meta.innerHTML =
+            `<div><strong>Arama terimi:</strong> ${data.search_query}</div>` +
+            `<div>Kaynak: <a href="${data.image}" target="_blank" rel="noopener">${data.image}</a></div>`;
         } catch (e) {
           area.innerHTML = `<span class="error">Ağ hatası: ${e.message}</span>`;
         } finally {

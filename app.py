@@ -1,8 +1,13 @@
+import os
 import re
 from urllib.parse import quote, unquote
 
 import requests
+from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request
+from openai import OpenAI
+
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -14,6 +19,44 @@ SEARCH_HEADERS = {
     "Accept-Language": "tr-TR,tr;q=0.9,en;q=0.8",
 }
 
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+_openai_client: OpenAI | None = None
+
+
+def get_openai() -> OpenAI:
+    global _openai_client
+    if _openai_client is None:
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise RuntimeError(
+                "OPENAI_API_KEY tanımlı değil. .env dosyasına ekle."
+            )
+        _openai_client = OpenAI()
+    return _openai_client
+
+
+KEYWORD_PROMPT = (
+    "Aşağıdaki metni özetleyen, Google Görseller'de iyi sonuç verecek "
+    "kısa bir arama terimi üret. Sadece terimi döndür, başka hiçbir şey yazma. "
+    "2-5 kelime, tırnaksız, noktasız."
+)
+
+
+def extract_search_query(text: str) -> str:
+    client = get_openai()
+    resp = client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[
+            {"role": "system", "content": KEYWORD_PROMPT},
+            {"role": "user", "content": text},
+        ],
+        temperature=0.2,
+        max_tokens=30,
+    )
+    raw = (resp.choices[0].message.content or "").strip()
+    # tek satır, tırnak/nokta temizliği
+    raw = raw.splitlines()[0] if raw else ""
+    return raw.strip().strip('"').strip("'").rstrip(".")
+
 
 def _first_image_from_google(query: str) -> str | None:
     url = f"https://www.google.com/search?tbm=isch&q={quote(query)}"
@@ -21,7 +64,6 @@ def _first_image_from_google(query: str) -> str | None:
     r.raise_for_status()
     html = r.text
 
-    # Google embeds candidate image URLs inside arrays like ["https://...jpg",123,456]
     candidates = re.findall(
         r'\["(https?://[^"]+?\.(?:jpg|jpeg|png|gif|webp))",\s*\d+,\s*\d+\]',
         html,
@@ -32,7 +74,6 @@ def _first_image_from_google(query: str) -> str | None:
             continue
         return c
 
-    # Fallback: imgres?imgurl=... links in the HTML
     for m in re.findall(r"/imgres\?imgurl=([^&]+)&", html):
         decoded = unquote(m)
         if decoded.startswith("http"):
@@ -42,7 +83,6 @@ def _first_image_from_google(query: str) -> str | None:
 
 
 def _first_image_from_duckduckgo(query: str) -> str | None:
-    # vqd token
     token_resp = requests.post(
         "https://duckduckgo.com/",
         data={"q": query},
@@ -89,18 +129,26 @@ def index():
 @app.post("/suggest")
 def suggest():
     payload = request.get_json(silent=True) or {}
-    query = (payload.get("query") or "").strip()
-    if not query:
+    text = (payload.get("query") or "").strip()
+    if not text:
         return jsonify({"error": "Metin boş olamaz."}), 400
 
-    image = find_first_image(query)
+    try:
+        search_query = extract_search_query(text)
+    except Exception as e:
+        return jsonify({"error": f"Anahtar kelime çıkarılamadı: {e}"}), 500
+
+    if not search_query:
+        return jsonify({"error": "Anahtar kelime üretilemedi."}), 500
+
+    image = find_first_image(search_query)
     if not image:
-        return jsonify({"error": "Resim bulunamadı."}), 404
-    return jsonify({"image": image, "query": query})
+        return jsonify(
+            {"error": "Resim bulunamadı.", "search_query": search_query}
+        ), 404
+    return jsonify({"image": image, "search_query": search_query})
 
 
 if __name__ == "__main__":
-    import os
-
     port = int(os.environ.get("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=True)
